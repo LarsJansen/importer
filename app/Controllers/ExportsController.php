@@ -16,23 +16,14 @@ class ExportsController
         $batchId = ($_GET['batch_id'] ?? '') !== '' ? (int) $_GET['batch_id'] : null;
         $branch = trim((string) ($_GET['branch'] ?? ''));
 
-        $preview = ['categories' => 0, 'sites' => 0];
-        if (method_exists(ExportBuilder::class, 'preview')) {
-            $preview = ExportBuilder::preview($batchId, $branch !== '' ? $branch : null);
-        }
-
-        $branches = [];
-        if (method_exists(SourceCategory::class, 'branches')) {
-            $branches = SourceCategory::branches();
-        }
-
         View::render('exports/index', [
             'runs' => ExportRun::paginate($page, $perPage),
+            'preview' => ExportBuilder::preview($batchId, $branch !== '' ? $branch : null),
             'batches' => Batch::paginate(1, 250)['rows'],
-            'branches' => $branches,
-            'preview' => $preview,
+            'branches' => SourceCategory::branches(),
             'selectedBatchId' => $batchId,
             'selectedBranch' => $branch,
+            'message' => $_GET['message'] ?? null,
         ]);
     }
 
@@ -40,11 +31,23 @@ class ExportsController
     {
         $batchId = ($_POST['batch_id'] ?? '') !== '' ? (int) $_POST['batch_id'] : null;
         $branch = trim((string) ($_POST['branch'] ?? ''));
+        $branch = $branch !== '' ? $branch : null;
 
-        $result = ExportBuilder::writeSql($batchId, $branch !== '' ? $branch : null);
-        ExportRun::create($batchId, $result['filename'], (int) ($result['categories_count'] ?? 0), (int) ($result['sites_count'] ?? 0));
+        $result = ExportBuilder::generate($batchId, $branch);
+        ExportRun::create(
+            $result['batch_id'] ?? $batchId,
+            $result['filename'],
+            $result['categories_count'],
+            $result['sites_count']
+        );
 
-        header('Location: /exports');
+        $query = http_build_query([
+            'message' => 'Export generated: ' . $result['filename'],
+            'batch_id' => $batchId,
+            'branch' => $branch,
+        ]);
+
+        header('Location: /exports?' . $query);
         exit;
     }
 }

@@ -12,7 +12,11 @@ class ExportRun
 
         $total = (int) $pdo->query('SELECT COUNT(*) FROM export_runs')->fetchColumn();
 
-        $sql = 'SELECT * FROM export_runs ORDER BY id DESC LIMIT :limit OFFSET :offset';
+        $sql = 'SELECT er.*, ib.label AS batch_label
+                FROM export_runs er
+                LEFT JOIN import_batches ib ON ib.id = er.batch_id
+                ORDER BY er.created_at DESC, er.id DESC
+                LIMIT :limit OFFSET :offset';
         $stmt = $pdo->prepare($sql);
         $stmt->bindValue(':limit', $perPage, \PDO::PARAM_INT);
         $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);

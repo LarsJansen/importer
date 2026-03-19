@@ -5,6 +5,7 @@ $preview = $preview ?? ['categories' => 0, 'sites' => 0];
 $runs = $runs ?? ['rows' => [], 'total' => 0, 'page' => 1, 'perPage' => 25, 'pages' => 1];
 $batches = $batches ?? [];
 $branches = $branches ?? [];
+$message = $message ?? null;
 
 function h(?string $value): string
 {
@@ -25,6 +26,10 @@ if ($selectedBranch !== '') {
         <div class="text-muted">Generate live-directory-ready SQL from approved categories and approved sites.</div>
     </div>
 </div>
+
+<?php if ($message): ?>
+    <div class="alert alert-success"><?= h($message) ?></div>
+<?php endif; ?>
 
 <div class="row g-3 mb-4">
     <div class="col-lg-5">
@@ -66,14 +71,14 @@ if ($selectedBranch !== '') {
 
                 <div class="border rounded p-3 bg-light mb-3">
                     <div class="fw-semibold mb-2">Preview</div>
-                    <div>Approved categories: <strong><?= (int) ($preview['categories'] ?? 0) ?></strong></div>
-                    <div>Approved sites: <strong><?= (int) ($preview['sites'] ?? 0) ?></strong></div>
+                    <div>Export categories: <strong><?= (int) ($preview['categories'] ?? 0) ?></strong></div>
+                    <div>Export sites: <strong><?= (int) ($preview['sites'] ?? 0) ?></strong></div>
                 </div>
 
                 <form method="post" action="/exports/generate">
                     <input type="hidden" name="batch_id" value="<?= h((string) ($selectedBatchId ?? '')) ?>">
                     <input type="hidden" name="branch" value="<?= h($selectedBranch) ?>">
-                    <button class="btn btn-primary" type="submit" <?= (($preview['categories'] ?? 0) <= 0 && ($preview['sites'] ?? 0) <= 0) ? 'disabled' : '' ?>>
+                    <button class="btn btn-primary" type="submit" <?= (($preview['categories'] ?? 0) <= 0 || ($preview['sites'] ?? 0) <= 0) ? 'disabled' : '' ?>>
                         Generate SQL export
                     </button>
                 </form>
@@ -85,11 +90,11 @@ if ($selectedBranch !== '') {
             <div class="card-header">Export rules</div>
             <div class="card-body">
                 <ul class="mb-0">
-                    <li>Exports only categories where <code>mapping_status = approved</code>.</li>
+                    <li>Exports only categories where <code>mapping_status = approved</code> in the importer.</li>
                     <li>Exports only sites where <code>import_status = approved</code>.</li>
-                    <li>Skips rows flagged as duplicates and rows with missing category links.</li>
+                    <li>Skips duplicate-flagged rows and rows with missing category links.</li>
                     <li>Keeps source descriptions as-is, including HTML.</li>
-                    <li>Current exporter is still the safe starter version.</li>
+                    <li>Writes SQL with <code>NOT EXISTS</code> checks so duplicate category paths and duplicate normalized URLs are skipped on import.</li>
                 </ul>
             </div>
         </div>
@@ -133,7 +138,7 @@ if ($selectedBranch !== '') {
                             <td><?= (int) ($run['id'] ?? 0) ?></td>
                             <td><?= h($run['created_at'] ?? '') ?></td>
                             <td><code><?= h($run['filename'] ?? '') ?></code></td>
-                            <td><?= (int) ($run['batch_id'] ?? 0) ?></td>
+                            <td><?= h($run['batch_label'] ?? ($run['batch_id'] ?? '')) ?></td>
                             <td><?= (int) ($run['categories_count'] ?? 0) ?></td>
                             <td><?= (int) ($run['sites_count'] ?? 0) ?></td>
                         </tr>
