@@ -30,6 +30,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         (new App\Controllers\SitesController())->bulkUpdate();
         exit;
     }
+	if ($path === '/exports/generate') {
+		(new App\Controllers\ExportsController())->generate();
+		exit;
+	}
 }
 
 $routes = [
@@ -38,6 +42,7 @@ $routes = [
     '/categories' => [App\Controllers\CategoriesController::class, 'index'],
     '/sites' => [App\Controllers\SitesController::class, 'index'],
     '/mappings' => [App\Controllers\MappingsController::class, 'index'],
+	'/exports' => [App\Controllers\ExportsController::class, 'index'],
 ];
 
 if (preg_match('#^/batches/(\d+)$#', $path, $matches)) {

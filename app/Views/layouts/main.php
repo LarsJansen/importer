@@ -22,6 +22,7 @@
             <a class="nav-link" href="/categories">Categories</a>
             <a class="nav-link" href="/sites">Sites</a>
             <a class="nav-link" href="/mappings">Mappings</a>
+			<a class="nav-link" href="/exports">Exports</a>
         </div>
     </div>
 </nav>
