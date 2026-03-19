@@ -1,0 +1,3 @@
+-- Phase 3 does not require structural database changes for a fresh install.
+-- Existing Phase 2 installs can stay on the current importer schema.
+-- This file exists only as a placeholder to keep migration history explicit.
