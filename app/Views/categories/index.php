@@ -5,11 +5,8 @@ $selectedBranch = $selectedBranch ?? '';
 $selectedStatus = $selectedStatus ?? '';
 $pathSearch = $pathSearch ?? '';
 $perPage = $perPage ?? 50;
-
-function h(?string $value): string
-{
-    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
-}
+$selectedBatchId = $selectedBatchId ?? null;
+function h(?string $value): string { return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8'); }
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -22,6 +19,9 @@ function h(?string $value): string
 <div class="card mb-3">
     <div class="card-body">
         <form method="get" class="row g-2 align-items-end">
+            <?php if ($selectedBatchId): ?>
+                <input type="hidden" name="batch_id" value="<?= (int) $selectedBatchId ?>">
+            <?php endif; ?>
             <div class="col-md-3">
                 <label class="form-label">Top branch</label>
                 <select name="branch" class="form-select">
@@ -61,6 +61,7 @@ function h(?string $value): string
 </div>
 
 <form method="post" action="/categories/bulk">
+    <input type="hidden" name="batch_id" value="<?= (int) ($selectedBatchId ?? 0) ?>">
     <input type="hidden" name="branch" value="<?= h($selectedBranch) ?>">
     <input type="hidden" name="status" value="<?= h($selectedStatus) ?>">
     <input type="hidden" name="path" value="<?= h($pathSearch) ?>">
@@ -107,40 +108,6 @@ function h(?string $value): string
                 <button class="btn btn-warning" type="submit" name="action" value="skip">Skip selected</button>
                 <button class="btn btn-outline-secondary" type="submit" name="action" value="reset">Reset to pending</button>
             </div>
-        </div>
-
-        <div class="card-footer d-flex justify-content-between align-items-center">
-            <div class="text-muted">
-                Showing <?= count($categories['rows'] ?? []) ?> of <?= (int) ($categories['total'] ?? 0) ?> categories.
-            </div>
-            <ul class="pagination pagination-sm mb-0">
-                <?php
-                $prevDisabled = ((int) ($categories['page'] ?? 1) <= 1) ? 'disabled' : '';
-                $nextDisabled = ((int) ($categories['page'] ?? 1) >= (int) ($categories['pages'] ?? 1)) ? 'disabled' : '';
-
-                $prevQuery = http_build_query(array_filter([
-                    'branch' => $selectedBranch,
-                    'status' => $selectedStatus,
-                    'path' => $pathSearch,
-                    'per_page' => $perPage,
-                    'page' => max(1, (int) ($categories['page'] ?? 1) - 1),
-                ], fn($v) => $v !== ''));
-
-                $nextQuery = http_build_query(array_filter([
-                    'branch' => $selectedBranch,
-                    'status' => $selectedStatus,
-                    'path' => $pathSearch,
-                    'per_page' => $perPage,
-                    'page' => min((int) ($categories['pages'] ?? 1), (int) ($categories['page'] ?? 1) + 1),
-                ], fn($v) => $v !== ''));
-                ?>
-                <li class="page-item <?= $prevDisabled ?>">
-                    <a class="page-link" href="/categories?<?= h($prevQuery) ?>">Previous</a>
-                </li>
-                <li class="page-item <?= $nextDisabled ?>">
-                    <a class="page-link" href="/categories?<?= h($nextQuery) ?>">Next</a>
-                </li>
-            </ul>
         </div>
     </div>
 </form>

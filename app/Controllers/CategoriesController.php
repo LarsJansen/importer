@@ -9,13 +9,15 @@ class CategoriesController
     public function index(): void
     {
         $page = max(1, (int) ($_GET['page'] ?? 1));
-        $perPage = max(25, min(250, (int) ($_GET['per_page'] ?? 50)));
-        $branch = trim((string) ($_GET['branch'] ?? ''));
-        $status = trim((string) ($_GET['status'] ?? ''));
-        $path = trim((string) ($_GET['path'] ?? ''));
+        $perPage = max(1, (int) ($_GET['per_page'] ?? 50));
+        $branch = (string) ($_GET['branch'] ?? '');
+        $status = (string) ($_GET['status'] ?? '');
+        $path = (string) ($_GET['path'] ?? '');
+        $batchId = ($_GET['batch_id'] ?? '') !== '' ? (int) $_GET['batch_id'] : null;
 
         View::render('categories/index', [
-            'result' => SourceCategory::paginate($page, $perPage, [
+            'categories' => SourceCategory::paginate($page, $perPage, [
+                'batch_id' => $batchId,
                 'branch' => $branch ?: null,
                 'status' => $status ?: null,
                 'path' => $path ?: null,
@@ -25,6 +27,7 @@ class CategoriesController
             'selectedStatus' => $status,
             'pathSearch' => $path,
             'perPage' => $perPage,
+            'selectedBatchId' => $batchId,
         ]);
     }
 
@@ -45,6 +48,7 @@ class CategoriesController
         }
 
         redirect('/categories?' . http_build_query(array_filter([
+            'batch_id' => $_POST['batch_id'] ?? '',
             'branch' => $_POST['branch'] ?? '',
             'status' => $_POST['status'] ?? '',
             'path' => $_POST['path'] ?? '',

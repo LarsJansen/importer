@@ -15,9 +15,11 @@ class SitesController
         $branch = (string) ($_GET['branch'] ?? '');
         $path = (string) ($_GET['path'] ?? '');
         $url = (string) ($_GET['url'] ?? '');
+        $batchId = ($_GET['batch_id'] ?? '') !== '' ? (int) $_GET['batch_id'] : null;
 
         View::render('sites/index', [
             'sites' => SourceSite::paginate($page, $perPage, [
+                'batch_id' => $batchId,
                 'status' => $status ?: null,
                 'branch' => $branch ?: null,
                 'path' => $path ?: null,
@@ -29,7 +31,8 @@ class SitesController
             'pathSearch' => $path,
             'urlSearch' => $url,
             'perPage' => $perPage,
-            'counts' => SourceSite::counts(),
+            'counts' => SourceSite::counts($batchId),
+            'selectedBatchId' => $batchId,
         ]);
     }
 
@@ -50,6 +53,7 @@ class SitesController
         }
 
         redirect('/sites?' . http_build_query(array_filter([
+            'batch_id' => $_POST['batch_id'] ?? '',
             'status' => $_POST['status'] ?? '',
             'branch' => $_POST['branch'] ?? '',
             'path' => $_POST['path'] ?? '',

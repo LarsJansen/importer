@@ -12,13 +12,13 @@ class SourceSite
 
         [$where, $params] = self::buildWhere($filters);
 
-        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM source_sites ss LEFT JOIN source_categories sc ON sc.source_category_id = ss.source_category_id {$where}");
+        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM source_sites ss LEFT JOIN source_categories sc ON sc.id = ss.source_category_row_id {$where}");
         $countStmt->execute($params);
         $total = (int) $countStmt->fetchColumn();
 
         $sql = "SELECT ss.*, sc.full_path, sc.top_branch
                 FROM source_sites ss
-                LEFT JOIN source_categories sc ON sc.source_category_id = ss.source_category_id
+                LEFT JOIN source_categories sc ON sc.id = ss.source_category_row_id
                 {$where}
                 ORDER BY ss.id DESC
                 LIMIT :limit OFFSET :offset";
@@ -43,6 +43,11 @@ class SourceSite
     {
         $clauses = [];
         $params = [];
+
+        if (!empty($filters['batch_id'])) {
+            $clauses[] = 'ss.batch_id = :batch_id';
+            $params['batch_id'] = (int) $filters['batch_id'];
+        }
 
         if (!empty($filters['status'])) {
             if ($filters['status'] === 'duplicates') {
@@ -86,19 +91,12 @@ class SourceSite
         $stmt->execute(array_merge([$status], $ids));
     }
 
-    public static function insert(array $data): void
-    {
-        $sql = 'INSERT INTO source_sites (batch_id, source_category_id, source_category_row_id, url, normalized_url, title, description_raw, http_scheme, import_status, duplicate_flag, notes, created_at, updated_at) VALUES (:batch_id, :source_category_id, :source_category_row_id, :url, :normalized_url, :title, :description_raw, :http_scheme, :import_status, :duplicate_flag, :notes, NOW(), NOW())';
-        $stmt = Database::connection()->prepare($sql);
-        $stmt->execute($data);
-    }
-
     public static function count(): int
     {
         return (int) Database::connection()->query('SELECT COUNT(*) FROM source_sites')->fetchColumn();
     }
 
-    public static function counts(): array
+    public static function counts(?int $batchId = null): array
     {
         $sql = "SELECT
                     COUNT(*) AS total,
@@ -110,7 +108,15 @@ class SourceSite
                     SUM(CASE WHEN source_category_row_id IS NULL THEN 1 ELSE 0 END) AS missing_category_count,
                     SUM(CASE WHEN import_status = 'approved' AND duplicate_flag = 0 AND source_category_row_id IS NOT NULL THEN 1 ELSE 0 END) AS ready_export_count
                 FROM source_sites";
-        $row = Database::connection()->query($sql)->fetch();
+        $params = [];
+        if ($batchId !== null) {
+            $sql .= " WHERE batch_id = :batch_id";
+            $params['batch_id'] = $batchId;
+        }
+
+        $stmt = Database::connection()->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch() ?: [];
 
         return [
             'total' => (int) ($row['total'] ?? 0),

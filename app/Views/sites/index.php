@@ -6,31 +6,19 @@ $selectedBranch = $selectedBranch ?? '';
 $pathSearch = $pathSearch ?? '';
 $urlSearch = $urlSearch ?? '';
 $perPage = $perPage ?? 50;
-$counts = $counts ?? [
-    'total' => 0,
-    'ready' => 0,
-    'approved' => 0,
-    'rejected' => 0,
-    'invalid' => 0,
-    'duplicates' => 0,
-    'missing_category' => 0,
-    'ready_export' => 0,
-];
-
-function h(?string $value): string
-{
-    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
-}
-
-function statusFilterLink(string $label, string $statusValue, int $count, string $selectedStatus, string $selectedBranch, string $pathSearch, string $urlSearch, int $perPage): string
+$selectedBatchId = $selectedBatchId ?? null;
+$counts = $counts ?? ['total'=>0,'ready'=>0,'approved'=>0,'rejected'=>0,'invalid'=>0,'duplicates'=>0,'missing_category'=>0,'ready_export'=>0];
+function h(?string $value): string { return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8'); }
+function statusFilterLink(string $label, string $statusValue, int $count, ?int $batchId, string $selectedStatus, string $selectedBranch, string $pathSearch, string $urlSearch, int $perPage): string
 {
     $query = array_filter([
+        'batch_id' => $batchId,
         'status' => $statusValue,
         'branch' => $selectedBranch,
         'path' => $pathSearch,
         'url' => $urlSearch,
         'per_page' => $perPage,
-    ], fn($v) => $v !== '');
+    ], fn($v) => $v !== '' && $v !== null);
 
     $active = $selectedStatus === $statusValue || ($statusValue === '' && $selectedStatus === '');
     $class = $active ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-outline-secondary';
@@ -48,20 +36,23 @@ function statusFilterLink(string $label, string $statusValue, int $count, string
 
 <div class="card mb-3">
     <div class="card-body d-flex flex-wrap gap-2">
-        <?= statusFilterLink('All sites', '', (int) $counts['total'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
-        <?= statusFilterLink('Ready', 'ready', (int) $counts['ready'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
-        <?= statusFilterLink('Approved', 'approved', (int) $counts['approved'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
-        <?= statusFilterLink('Ready for export', 'ready_export', (int) $counts['ready_export'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
-        <?= statusFilterLink('Rejected', 'rejected', (int) $counts['rejected'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
-        <?= statusFilterLink('Invalid', 'invalid', (int) $counts['invalid'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
-        <?= statusFilterLink('Missing category', 'missing_category', (int) $counts['missing_category'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
-        <?= statusFilterLink('Duplicates', 'duplicates', (int) $counts['duplicates'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('All sites', '', (int) $counts['total'], $selectedBatchId, $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Ready', 'ready', (int) $counts['ready'], $selectedBatchId, $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Approved', 'approved', (int) $counts['approved'], $selectedBatchId, $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Ready for export', 'ready_export', (int) $counts['ready_export'], $selectedBatchId, $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Rejected', 'rejected', (int) $counts['rejected'], $selectedBatchId, $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Invalid', 'invalid', (int) $counts['invalid'], $selectedBatchId, $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Missing category', 'missing_category', (int) $counts['missing_category'], $selectedBatchId, $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Duplicates', 'duplicates', (int) $counts['duplicates'], $selectedBatchId, $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
     </div>
 </div>
 
 <div class="card mb-3">
     <div class="card-body">
         <form method="get" class="row g-2 align-items-end">
+            <?php if ($selectedBatchId): ?>
+                <input type="hidden" name="batch_id" value="<?= (int) $selectedBatchId ?>">
+            <?php endif; ?>
             <div class="col-md-3">
                 <label class="form-label">Top branch</label>
                 <select name="branch" class="form-select">
@@ -113,6 +104,7 @@ function statusFilterLink(string $label, string $statusValue, int $count, string
 </div>
 
 <form method="post" action="/sites/bulk">
+    <input type="hidden" name="batch_id" value="<?= (int) ($selectedBatchId ?? 0) ?>">
     <input type="hidden" name="status" value="<?= h($selectedStatus) ?>">
     <input type="hidden" name="branch" value="<?= h($selectedBranch) ?>">
     <input type="hidden" name="path" value="<?= h($pathSearch) ?>">
@@ -141,9 +133,7 @@ function statusFilterLink(string $label, string $statusValue, int $count, string
                                 <td><?= (int) $row['id'] ?></td>
                                 <td>
                                     <div><a href="<?= h($row['url'] ?? '') ?>" target="_blank" rel="noreferrer"><?= h($row['url'] ?? '') ?></a></div>
-                                    <?php if (!empty($row['duplicate_flag'])): ?>
-                                        <div><span class="badge text-bg-warning">duplicate</span></div>
-                                    <?php endif; ?>
+                                    <?php if (!empty($row['duplicate_flag'])): ?><div><span class="badge text-bg-warning">duplicate</span></div><?php endif; ?>
                                 </td>
                                 <td><?= h($row['title'] ?? '') ?></td>
                                 <td><code class="small-path"><?= h($row['full_path'] ?? '') ?></code></td>
@@ -163,42 +153,6 @@ function statusFilterLink(string $label, string $statusValue, int $count, string
                 <button class="btn btn-danger" type="submit" name="action" value="reject">Reject selected</button>
                 <button class="btn btn-outline-secondary" type="submit" name="action" value="reset">Reset to ready</button>
             </div>
-        </div>
-
-        <div class="card-footer d-flex justify-content-between align-items-center">
-            <div class="text-muted">
-                Showing <?= count($sites['rows'] ?? []) ?> of <?= (int) ($sites['total'] ?? 0) ?> sites.
-            </div>
-            <ul class="pagination pagination-sm mb-0">
-                <?php
-                $prevDisabled = ((int) ($sites['page'] ?? 1) <= 1) ? 'disabled' : '';
-                $nextDisabled = ((int) ($sites['page'] ?? 1) >= (int) ($sites['pages'] ?? 1)) ? 'disabled' : '';
-
-                $prevQuery = http_build_query(array_filter([
-                    'status' => $selectedStatus,
-                    'branch' => $selectedBranch,
-                    'path' => $pathSearch,
-                    'url' => $urlSearch,
-                    'per_page' => $perPage,
-                    'page' => max(1, (int) ($sites['page'] ?? 1) - 1),
-                ], fn($v) => $v !== ''));
-
-                $nextQuery = http_build_query(array_filter([
-                    'status' => $selectedStatus,
-                    'branch' => $selectedBranch,
-                    'path' => $pathSearch,
-                    'url' => $urlSearch,
-                    'per_page' => $perPage,
-                    'page' => min((int) ($sites['pages'] ?? 1), (int) ($sites['page'] ?? 1) + 1),
-                ], fn($v) => $v !== ''));
-                ?>
-                <li class="page-item <?= $prevDisabled ?>">
-                    <a class="page-link" href="/sites?<?= h($prevQuery) ?>">Previous</a>
-                </li>
-                <li class="page-item <?= $nextDisabled ?>">
-                    <a class="page-link" href="/sites?<?= h($nextQuery) ?>">Next</a>
-                </li>
-            </ul>
         </div>
     </div>
 </form>

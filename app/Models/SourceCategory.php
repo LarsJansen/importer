@@ -9,13 +9,18 @@ class SourceCategory
     {
         $offset = ($page - 1) * $perPage;
         $pdo = Database::connection();
+
         [$where, $params] = self::buildWhere($filters);
 
-        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM source_categories {$where}");
+        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM source_categories sc {$where}");
         $countStmt->execute($params);
         $total = (int) $countStmt->fetchColumn();
 
-        $sql = "SELECT * FROM source_categories {$where} ORDER BY entry_count DESC, full_path ASC LIMIT :limit OFFSET :offset";
+        $sql = "SELECT sc.*
+                FROM source_categories sc
+                {$where}
+                ORDER BY sc.entry_count DESC, sc.full_path ASC
+                LIMIT :limit OFFSET :offset";
         $stmt = $pdo->prepare($sql);
         foreach ($params as $k => $v) {
             $stmt->bindValue(':' . $k, $v);
@@ -38,27 +43,28 @@ class SourceCategory
         $clauses = [];
         $params = [];
 
+        if (!empty($filters['batch_id'])) {
+            $clauses[] = 'sc.batch_id = :batch_id';
+            $params['batch_id'] = (int) $filters['batch_id'];
+        }
+
         if (!empty($filters['branch'])) {
-            $clauses[] = 'top_branch = :branch';
+            $clauses[] = 'sc.top_branch = :branch';
             $params['branch'] = $filters['branch'];
         }
+
         if (!empty($filters['status'])) {
-            $clauses[] = 'mapping_status = :status';
+            $clauses[] = 'sc.mapping_status = :status';
             $params['status'] = $filters['status'];
         }
+
         if (!empty($filters['path'])) {
-            $clauses[] = 'full_path LIKE :path';
+            $clauses[] = 'sc.full_path LIKE :path';
             $params['path'] = '%' . $filters['path'] . '%';
         }
 
         $where = $clauses ? 'WHERE ' . implode(' AND ', $clauses) : '';
         return [$where, $params];
-    }
-
-    public static function branches(): array
-    {
-        $stmt = Database::connection()->query('SELECT DISTINCT top_branch FROM source_categories WHERE top_branch IS NOT NULL AND top_branch <> "" ORDER BY top_branch');
-        return $stmt->fetchAll();
     }
 
     public static function bulkUpdateStatus(array $ids, string $status): void
@@ -67,16 +73,19 @@ class SourceCategory
         $sql = "UPDATE source_categories SET mapping_status = ?, updated_at = NOW() WHERE id IN ({$placeholders})";
         $stmt = Database::connection()->prepare($sql);
         $stmt->execute(array_merge([$status], $ids));
+
+        $sql = "UPDATE category_mapping cm
+                INNER JOIN source_categories sc ON sc.source_category_id = cm.source_category_id
+                SET cm.mapping_status = ?, cm.updated_at = NOW()
+                WHERE sc.id IN ({$placeholders})";
+        $stmt = Database::connection()->prepare($sql);
+        $stmt->execute(array_merge([$status], $ids));
     }
 
-    public static function insert(array $data): void
+    public static function branches(): array
     {
-        $sql = 'INSERT INTO source_categories
-            (batch_id, source_category_id, full_path, category_name, parent_path, path_depth, entry_count, description_raw, geo_raw, geo_lat, geo_lng, top_branch, local_path_candidate, mapping_status, created_at, updated_at)
-            VALUES
-            (:batch_id, :source_category_id, :full_path, :category_name, :parent_path, :path_depth, :entry_count, :description_raw, :geo_raw, :geo_lat, :geo_lng, :top_branch, :local_path_candidate, :mapping_status, NOW(), NOW())';
-        $stmt = Database::connection()->prepare($sql);
-        $stmt->execute($data);
+        $sql = "SELECT DISTINCT top_branch FROM source_categories WHERE top_branch IS NOT NULL AND top_branch <> '' ORDER BY top_branch ASC";
+        return Database::connection()->query($sql)->fetchAll();
     }
 
     public static function count(): int
