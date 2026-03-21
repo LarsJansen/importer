@@ -3,303 +3,284 @@ require __DIR__ . '/bootstrap.php';
 
 use App\Core\Database;
 use App\Models\Batch;
-use App\Models\ImportFile;
-use App\Models\SourceCategory;
-use App\Models\SourceSite;
+use App\Services\UrlNormalizer;
 
-function normalize_url(string $url): string
-{
-    $url = trim($url);
-    $parts = parse_url($url);
-    if ($parts === false || empty($parts['host'])) {
-        return $url;
-    }
-
-    $scheme = strtolower($parts['scheme'] ?? 'http');
-    $host = strtolower($parts['host']);
-    $path = $parts['path'] ?? '/';
-    $path = $path === '' ? '/' : $path;
-    $path = preg_replace('#/+#', '/', $path);
-    $query = isset($parts['query']) && $parts['query'] !== '' ? '?' . $parts['query'] : '';
-    $port = isset($parts['port']) ? (int) $parts['port'] : null;
-    $defaultPort = ($scheme === 'https') ? 443 : 80;
-    $portPart = ($port && $port !== $defaultPort) ? ':' . $port : '';
-
-    return $scheme . '://' . $host . $portPart . $path . $query;
-}
-
-function slugify_segment(string $segment): string
-{
-    $segment = trim($segment);
-    $segment = html_entity_decode($segment, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-    $segment = strtolower($segment);
-    $segment = preg_replace('/[^a-z0-9]+/i', '-', $segment);
-    $segment = trim($segment, '-');
-    return $segment === '' ? 'untitled' : $segment;
-}
-
-function build_local_path_candidate(string $fullPath): string
-{
-    $segments = array_filter(array_map('trim', explode('/', $fullPath)), fn($v) => $v !== '');
-    $segments = array_map('slugify_segment', $segments);
-    return implode('/', $segments);
-}
-
-function parse_geo(?string $geoRaw): array
-{
-    $geoRaw = trim((string) $geoRaw);
-    if ($geoRaw === '') {
-        return [null, null];
-    }
-
-    $parts = preg_split('/\s+|,/', $geoRaw);
-    $parts = array_values(array_filter($parts, fn($v) => $v !== ''));
-    if (count($parts) < 2) {
-        return [null, null];
-    }
-
-    return [is_numeric($parts[0]) ? (float) $parts[0] : null, is_numeric($parts[1]) ? (float) $parts[1] : null];
-}
-
-function parse_args(array $argv): array
-{
-    $args = [];
-    foreach ($argv as $arg) {
-        if (str_starts_with($arg, '--')) {
-            $parts = explode('=', $arg, 2);
-            $key = ltrim($parts[0], '-');
-            $args[$key] = $parts[1] ?? true;
-        }
-    }
-    return $args;
-}
-
-$args = parse_args($argv);
-$dir = $args['dir'] ?? null;
-$categoriesFile = $args['categories'] ?? null;
-$sitesFile = $args['sites'] ?? null;
-$label = $args['label'] ?? null;
-
-if (!$dir && (!$categoriesFile || !$sitesFile)) {
-    echo "Usage:\n";
-    echo "  php scripts/import_curlie_tsv.php --dir=\"C:\\path\\to\\folder\"\n";
-    echo "  php scripts/import_curlie_tsv.php --categories=\"C:\\path\\rdf-Society-s.tsv\" --sites=\"C:\\path\\rdf-Society-c.tsv\"\n";
-    exit(1);
-}
+$options = getopt('', ['categories::', 'sites::', 'dir::']);
 
 $categoryFiles = [];
 $siteFiles = [];
 
-if ($dir) {
-    $dir = rtrim($dir, DIRECTORY_SEPARATOR);
+if (!empty($options['dir'])) {
+    $dir = rtrim($options['dir'], DIRECTORY_SEPARATOR);
+    if (!is_dir($dir)) {
+        fwrite(STDERR, "Directory not found: {$dir}\n");
+        exit(1);
+    }
+
     foreach (glob($dir . DIRECTORY_SEPARATOR . '*-s.tsv') as $file) {
         $categoryFiles[] = $file;
     }
     foreach (glob($dir . DIRECTORY_SEPARATOR . '*-c.tsv') as $file) {
         $siteFiles[] = $file;
     }
-} else {
-    $categoryFiles[] = $categoriesFile;
-    $siteFiles[] = $sitesFile;
 }
 
-sort($categoryFiles);
-sort($siteFiles);
+if (!empty($options['categories'])) {
+    $categoryFiles = array_merge($categoryFiles, array_map('trim', explode(',', $options['categories'])));
+}
+if (!empty($options['sites'])) {
+    $siteFiles = array_merge($siteFiles, array_map('trim', explode(',', $options['sites'])));
+}
 
-$label = $label ?: ('Curlie TSV Import ' . date('Y-m-d H:i:s'));
+$categoryFiles = array_values(array_unique(array_filter($categoryFiles)));
+$siteFiles = array_values(array_unique(array_filter($siteFiles)));
+
+if (empty($categoryFiles) && empty($siteFiles)) {
+    fwrite(STDERR, "Usage:\n");
+    fwrite(STDERR, "  php scripts/import_curlie_tsv.php --dir=\"C:\\path\\to\\curlie-data\"\n");
+    fwrite(STDERR, "  php scripts/import_curlie_tsv.php --categories=\"C:\\path\\rdf-Society-s.tsv\" --sites=\"C:\\path\\rdf-Society-c.tsv\"\n");
+    exit(1);
+}
+
+$pdo = Database::connection();
+
+$label = 'Curlie TSV Import ' . date('Y-m-d H:i:s');
 $batchId = Batch::create([
     'source_name' => 'curlie',
     'label' => $label,
     'status' => 'running',
-    'notes' => $dir ? ('Imported from folder: ' . $dir) : 'Imported from explicit file pair(s).',
+    'notes' => null,
 ]);
 
 echo "Starting batch #{$batchId}: {$label}\n";
-$pdo = Database::connection();
-$errors = 0;
-$totalCategories = 0;
-$totalSites = 0;
-$categoryLookup = [];
-$normalizedSeen = [];
+
+$counts = [
+    'categories_imported' => 0,
+    'sites_imported' => 0,
+    'errors_count' => 0,
+];
 
 try {
     foreach ($categoryFiles as $file) {
         echo "Importing categories from {$file}\n";
-        $handle = fopen($file, 'rb');
-        if (!$handle) {
-            throw new RuntimeException("Failed to open category file: {$file}");
-        }
-
-        $rowsRead = 0;
-        $rowsImported = 0;
-        $rowsSkipped = 0;
-
-        while (($row = fgetcsv($handle, 0, "\t")) !== false) {
-            $rowsRead++;
-            $row = array_pad($row, 5, '');
-            [$sourceCategoryId, $fullPath, $entryCount, $descriptionRaw, $geoRaw] = $row;
-            $sourceCategoryId = trim((string) $sourceCategoryId);
-            $fullPath = trim((string) $fullPath);
-            $entryCount = trim((string) $entryCount);
-
-            if ($sourceCategoryId === '' || $fullPath === '') {
-                $rowsSkipped++;
-                continue;
-            }
-
-            $segments = array_values(array_filter(array_map('trim', explode('/', $fullPath))));
-            $categoryName = end($segments) ?: $fullPath;
-            $parentPath = count($segments) > 1 ? implode('/', array_slice($segments, 0, -1)) : null;
-            $pathDepth = count($segments) ?: 1;
-            $topBranch = $segments[0] ?? null;
-            [$geoLat, $geoLng] = parse_geo($geoRaw);
-            $mappingStatus = 'pending';
-            $localPathCandidate = build_local_path_candidate($fullPath);
-
-            try {
-                SourceCategory::insert([
-                    'batch_id' => $batchId,
-                    'source_category_id' => (int) $sourceCategoryId,
-                    'full_path' => $fullPath,
-                    'category_name' => $categoryName,
-                    'parent_path' => $parentPath,
-                    'path_depth' => $pathDepth,
-                    'entry_count' => is_numeric($entryCount) ? (int) $entryCount : 0,
-                    'description_raw' => $descriptionRaw !== '' ? $descriptionRaw : null,
-                    'geo_raw' => trim((string) $geoRaw) !== '' ? trim((string) $geoRaw) : null,
-                    'geo_lat' => $geoLat,
-                    'geo_lng' => $geoLng,
-                    'top_branch' => $topBranch,
-                    'local_path_candidate' => $localPathCandidate,
-                    'mapping_status' => $mappingStatus,
-                ]);
-                $categoryLookup[(int) $sourceCategoryId] = (int) $pdo->lastInsertId();
-                $rowsImported++;
-                $totalCategories++;
-            } catch (Throwable $e) {
-                $rowsSkipped++;
-                $errors++;
-            }
-        }
-
-        fclose($handle);
-        ImportFile::create([
-            'batch_id' => $batchId,
-            'file_type' => 'categories',
-            'filename' => basename($file),
-            'file_path' => $file,
-            'rows_read' => $rowsRead,
-            'rows_imported' => $rowsImported,
-            'rows_skipped' => $rowsSkipped,
-        ]);
-
-        echo "  Imported {$rowsImported} category rows, skipped {$rowsSkipped}\n";
+        [$imported, $skipped] = importCategoriesFile($pdo, $batchId, $file);
+        $counts['categories_imported'] += $imported;
+        echo "  Imported {$imported} category rows, skipped {$skipped}\n";
     }
 
-    if (!$categoryLookup) {
-        $stmt = $pdo->prepare('SELECT id, source_category_id FROM source_categories WHERE batch_id = :batch_id');
-        $stmt->execute(['batch_id' => $batchId]);
-        foreach ($stmt->fetchAll() as $row) {
-            $categoryLookup[(int) $row['source_category_id']] = (int) $row['id'];
-        }
-    }
+    rebuildCategoryMappings($pdo, $batchId);
 
     foreach ($siteFiles as $file) {
         echo "Importing sites from {$file}\n";
-        $handle = fopen($file, 'rb');
-        if (!$handle) {
-            throw new RuntimeException("Failed to open site file: {$file}");
-        }
-
-        $rowsRead = 0;
-        $rowsImported = 0;
-        $rowsSkipped = 0;
-
-        while (($row = fgetcsv($handle, 0, "\t")) !== false) {
-            $rowsRead++;
-            $row = array_pad($row, 4, '');
-            [$url, $title, $descriptionRaw, $sourceCategoryId] = $row;
-            $url = trim((string) $url);
-            $title = trim((string) $title);
-            $sourceCategoryId = trim((string) $sourceCategoryId);
-
-            if ($url === '' || $title === '' || $sourceCategoryId === '') {
-                $rowsSkipped++;
-                continue;
-            }
-
-            $normalizedUrl = normalize_url($url);
-            $parts = parse_url($url);
-            $isValidUrl = filter_var($url, FILTER_VALIDATE_URL) !== false;
-            $categoryRowId = $categoryLookup[(int) $sourceCategoryId] ?? null;
-            $importStatus = 'ready';
-            $notes = null;
-
-            if (!$isValidUrl) {
-                $importStatus = 'invalid';
-                $notes = 'Invalid URL';
-            } elseif ($categoryRowId === null) {
-                $importStatus = 'missing_category';
-                $notes = 'Category ID not found in imported categories';
-            }
-
-            $duplicateFlag = 0;
-            if (isset($normalizedSeen[$normalizedUrl])) {
-                $duplicateFlag = 1;
-            }
-            $normalizedSeen[$normalizedUrl] = true;
-
-            try {
-                SourceSite::insert([
-                    'batch_id' => $batchId,
-                    'source_category_id' => (int) $sourceCategoryId,
-                    'source_category_row_id' => $categoryRowId,
-                    'url' => $url,
-                    'normalized_url' => $normalizedUrl,
-                    'title' => $title,
-                    'description_raw' => $descriptionRaw !== '' ? $descriptionRaw : null,
-                    'http_scheme' => $parts['scheme'] ?? null,
-                    'import_status' => $importStatus,
-                    'duplicate_flag' => $duplicateFlag,
-                    'notes' => $notes,
-                ]);
-                $rowsImported++;
-                $totalSites++;
-            } catch (Throwable $e) {
-                $rowsSkipped++;
-                $errors++;
-            }
-        }
-
-        fclose($handle);
-        ImportFile::create([
-            'batch_id' => $batchId,
-            'file_type' => 'sites',
-            'filename' => basename($file),
-            'file_path' => $file,
-            'rows_read' => $rowsRead,
-            'rows_imported' => $rowsImported,
-            'rows_skipped' => $rowsSkipped,
-        ]);
-
-        echo "  Imported {$rowsImported} site rows, skipped {$rowsSkipped}\n";
+        [$imported, $skipped] = importSitesFile($pdo, $batchId, $file);
+        $counts['sites_imported'] += $imported;
+        echo "  Imported {$imported} site rows, skipped {$skipped}\n";
     }
 
-    Batch::complete($batchId, [
-        'categories_imported' => $totalCategories,
-        'sites_imported' => $totalSites,
-        'errors_count' => $errors,
-    ]);
-
-    echo "Done. Categories: {$totalCategories}, Sites: {$totalSites}, Errors: {$errors}\n";
-    exit(0);
-} catch (Throwable $e) {
-    Batch::complete($batchId, [
-        'categories_imported' => $totalCategories,
-        'sites_imported' => $totalSites,
-        'errors_count' => $errors + 1,
-    ], 'failed');
-
+    Batch::complete($batchId, $counts, 'completed');
+    echo "Done. Categories: {$counts['categories_imported']}, Sites: {$counts['sites_imported']}, Errors: {$counts['errors_count']}\n";
+} catch (\Throwable $e) {
+    $counts['errors_count']++;
+    Batch::complete($batchId, $counts, 'failed');
     fwrite(STDERR, "Import failed: " . $e->getMessage() . "\n");
     exit(1);
+}
+
+function importCategoriesFile(\PDO $pdo, int $batchId, string $file): array
+{
+    if (!is_file($file)) {
+        throw new \RuntimeException("Category file not found: {$file}");
+    }
+
+    $handle = fopen($file, 'rb');
+    if (!$handle) {
+        throw new \RuntimeException("Could not open category file: {$file}");
+    }
+
+    $imported = 0;
+    $skipped = 0;
+
+    $sql = "INSERT INTO source_categories
+        (batch_id, source_category_id, full_path, category_name, parent_path, path_depth, entry_count, description_raw, geo_raw, geo_lat, geo_lng, top_branch, local_path_candidate, mapping_status, created_at, updated_at)
+        VALUES
+        (:batch_id, :source_category_id, :full_path, :category_name, :parent_path, :path_depth, :entry_count, :description_raw, :geo_raw, :geo_lat, :geo_lng, :top_branch, :local_path_candidate, :mapping_status, NOW(), NOW())";
+    $stmt = $pdo->prepare($sql);
+
+    while (($row = fgetcsv($handle, 0, "\t")) !== false) {
+        if ($row === [null] || count($row) < 2) {
+            $skipped++;
+            continue;
+        }
+
+        $sourceCategoryId = trim((string)($row[0] ?? ''));
+        $fullPath = trim((string)($row[1] ?? ''));
+        if ($sourceCategoryId === '' || $fullPath === '') {
+            $skipped++;
+            continue;
+        }
+
+        $entryCount = (int) trim((string)($row[2] ?? '0'));
+        $description = (string)($row[3] ?? null);
+        $geoRaw = trim((string)($row[4] ?? ''));
+        [$geoLat, $geoLng] = parseGeo($geoRaw);
+
+        $parts = array_values(array_filter(array_map('trim', explode('/', $fullPath)), 'strlen'));
+        $categoryName = $parts ? end($parts) : $fullPath;
+        $parentPath = count($parts) > 1 ? implode('/', array_slice($parts, 0, -1)) : null;
+        $pathDepth = count($parts);
+        $topBranch = $parts[0] ?? null;
+        $localPathCandidate = strtolower(implode('/', array_map('slugifyPathPart', $parts)));
+
+        $stmt->execute([
+            'batch_id' => $batchId,
+            'source_category_id' => $sourceCategoryId,
+            'full_path' => $fullPath,
+            'category_name' => $categoryName,
+            'parent_path' => $parentPath,
+            'path_depth' => $pathDepth,
+            'entry_count' => $entryCount,
+            'description_raw' => $description !== '' ? $description : null,
+            'geo_raw' => $geoRaw !== '' ? $geoRaw : null,
+            'geo_lat' => $geoLat,
+            'geo_lng' => $geoLng,
+            'top_branch' => $topBranch,
+            'local_path_candidate' => $localPathCandidate !== '' ? $localPathCandidate : null,
+            'mapping_status' => 'pending',
+        ]);
+
+        $imported++;
+    }
+
+    fclose($handle);
+    return [$imported, $skipped];
+}
+
+function rebuildCategoryMappings(\PDO $pdo, int $batchId): void
+{
+    $sql = "INSERT INTO category_mapping
+        (source_category_id, source_full_path, local_path_candidate, local_path_final, mapping_status, notes, created_at, updated_at)
+        SELECT sc.source_category_id, sc.full_path, sc.local_path_candidate, NULL, sc.mapping_status, NULL, NOW(), NOW()
+        FROM source_categories sc
+        LEFT JOIN category_mapping cm ON cm.source_category_id = sc.source_category_id
+        WHERE sc.batch_id = :batch_id
+          AND cm.id IS NULL";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute(['batch_id' => $batchId]);
+}
+
+function importSitesFile(\PDO $pdo, int $batchId, string $file): array
+{
+    if (!is_file($file)) {
+        throw new \RuntimeException("Site file not found: {$file}");
+    }
+
+    $handle = fopen($file, 'rb');
+    if (!$handle) {
+        throw new \RuntimeException("Could not open site file: {$file}");
+    }
+
+    $imported = 0;
+    $skipped = 0;
+
+    $findCategoryStmt = $pdo->prepare(
+        "SELECT id
+         FROM source_categories
+         WHERE batch_id = :batch_id AND source_category_id = :source_category_id
+         ORDER BY id DESC
+         LIMIT 1"
+    );
+
+    $findDupStmt = $pdo->prepare(
+        "SELECT id
+         FROM source_sites
+         WHERE normalized_url = :normalized_url
+         LIMIT 1"
+    );
+
+    $insertStmt = $pdo->prepare(
+        "INSERT INTO source_sites
+        (batch_id, source_category_id, source_category_row_id, url, normalized_url, title, description_raw, http_scheme, import_status, duplicate_flag, notes, created_at, updated_at)
+        VALUES
+        (:batch_id, :source_category_id, :source_category_row_id, :url, :normalized_url, :title, :description_raw, :http_scheme, :import_status, :duplicate_flag, :notes, NOW(), NOW())"
+    );
+
+    while (($row = fgetcsv($handle, 0, "\t")) !== false) {
+        if ($row === [null] || count($row) < 4) {
+            $skipped++;
+            continue;
+        }
+
+        $url = trim((string)($row[0] ?? ''));
+        $title = trim((string)($row[1] ?? ''));
+        $description = (string)($row[2] ?? null);
+        $sourceCategoryId = trim((string)($row[3] ?? ''));
+
+        if ($url === '' || $sourceCategoryId === '') {
+            $skipped++;
+            continue;
+        }
+
+        $normalizedUrl = UrlNormalizer::normalize($url);
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        $scheme = $scheme ? strtolower((string)$scheme) : null;
+
+        $findCategoryStmt->execute([
+            'batch_id' => $batchId,
+            'source_category_id' => $sourceCategoryId,
+        ]);
+        $sourceCategoryRowId = $findCategoryStmt->fetchColumn();
+        $sourceCategoryRowId = $sourceCategoryRowId ? (int)$sourceCategoryRowId : null;
+
+        $duplicateFlag = 0;
+        if ($normalizedUrl !== '') {
+            $findDupStmt->execute(['normalized_url' => $normalizedUrl]);
+            $existingId = $findDupStmt->fetchColumn();
+            if ($existingId) {
+                $duplicateFlag = 1;
+            }
+        }
+
+        $insertStmt->execute([
+            'batch_id' => $batchId,
+            'source_category_id' => $sourceCategoryId,
+            'source_category_row_id' => $sourceCategoryRowId,
+            'url' => $url,
+            'normalized_url' => $normalizedUrl !== '' ? $normalizedUrl : $url,
+            'title' => $title !== '' ? $title : $url,
+            'description_raw' => $description !== '' ? $description : null,
+            'http_scheme' => $scheme,
+            'import_status' => 'pending',
+            'duplicate_flag' => $duplicateFlag,
+            'notes' => null,
+        ]);
+
+        $imported++;
+    }
+
+    fclose($handle);
+    return [$imported, $skipped];
+}
+
+function parseGeo(string $geoRaw): array
+{
+    if ($geoRaw === '') {
+        return [null, null];
+    }
+
+    $parts = preg_split('/[\s,]+/', trim($geoRaw));
+    if (!$parts || count($parts) < 2) {
+        return [null, null];
+    }
+
+    $lat = is_numeric($parts[0]) ? (float)$parts[0] : null;
+    $lng = is_numeric($parts[1]) ? (float)$parts[1] : null;
+
+    return [$lat, $lng];
+}
+
+function slugifyPathPart(string $value): string
+{
+    $value = strtolower(trim($value));
+    $value = preg_replace('/[^a-z0-9]+/i', '-', $value);
+    return trim((string)$value, '-');
 }

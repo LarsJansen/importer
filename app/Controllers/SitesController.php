@@ -10,14 +10,14 @@ class SitesController
     public function index(): void
     {
         $page = max(1, (int) ($_GET['page'] ?? 1));
-        $perPage = max(25, min(250, (int) ($_GET['per_page'] ?? 50)));
-        $status = trim((string) ($_GET['status'] ?? ''));
-        $branch = trim((string) ($_GET['branch'] ?? ''));
-        $path = trim((string) ($_GET['path'] ?? ''));
-        $url = trim((string) ($_GET['url'] ?? ''));
+        $perPage = max(1, (int) ($_GET['per_page'] ?? 50));
+        $status = (string) ($_GET['status'] ?? '');
+        $branch = (string) ($_GET['branch'] ?? '');
+        $path = (string) ($_GET['path'] ?? '');
+        $url = (string) ($_GET['url'] ?? '');
 
         View::render('sites/index', [
-            'result' => SourceSite::paginate($page, $perPage, [
+            'sites' => SourceSite::paginate($page, $perPage, [
                 'status' => $status ?: null,
                 'branch' => $branch ?: null,
                 'path' => $path ?: null,
@@ -29,6 +29,7 @@ class SitesController
             'pathSearch' => $path,
             'urlSearch' => $url,
             'perPage' => $perPage,
+            'counts' => SourceSite::counts(),
         ]);
     }
 

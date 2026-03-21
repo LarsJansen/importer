@@ -31,10 +31,14 @@ class ExportBuilder
         fwrite($fh, "-- Curlie importer export\n");
         fwrite($fh, "-- Generated at " . date('Y-m-d H:i:s') . "\n");
         fwrite($fh, "-- Filters: batch_id=" . ($batchId ?? 'all') . ", branch=" . ($branch ?: 'all') . "\n");
+        fwrite($fh, "-- Export Summary\n");
         fwrite($fh, "-- Categories: " . count($data['categories']) . "\n");
-        fwrite($fh, "-- Sites: " . count($data['sites']) . "\n\n");
-
-        fwrite($fh, "START TRANSACTION;\n\n");
+        fwrite($fh, "-- Sites: " . count($data['sites']) . "\n");
+        fwrite($fh, "-- Leaf categories:\n");
+        foreach ($data['leaf_paths'] as $leafPath) {
+            fwrite($fh, "--   " . $leafPath . "\n");
+        }
+        fwrite($fh, "\nSTART TRANSACTION;\n\n");
 
         fwrite($fh, "-- Create live import batch record\n");
         fwrite($fh, "INSERT INTO import_batches (source_name, source_version, batch_label, notes, status, total_categories, total_sites, started_at, completed_at)\n");
@@ -61,9 +65,8 @@ class ExportBuilder
 
         fwrite($fh, "-- Sites\n");
         foreach ($data['sites'] as $site) {
-            $normalized = $site['normalized_url'] ?: $site['url'];
+            $normalizedSql = self::sql($site['normalized_url']);
             $categoryPathSql = self::sql($site['category_path']);
-            $normalizedSql = self::sql($normalized);
 
             fwrite($fh, "INSERT INTO sites (category_id, title, slug, url, normalized_url, description, language_code, country_code, status, source_type, source_key, original_title, original_description, original_url, import_batch_id, submitted_by_user_id, is_reviewed, approved_at, is_active, created_at, updated_at)\n");
             fwrite($fh, "SELECT " .
@@ -124,6 +127,7 @@ class ExportBuilder
         $categoryRows = $stmt->fetchAll();
 
         $categoriesByPath = [];
+        $leafPaths = [];
 
         foreach ($categoryRows as $row) {
             $exportPath = self::normalizePath(
@@ -135,6 +139,8 @@ class ExportBuilder
             if ($exportPath === '') {
                 continue;
             }
+
+            $leafPaths[$exportPath] = true;
 
             $segments = explode('/', $exportPath);
             $build = [];
@@ -201,6 +207,7 @@ class ExportBuilder
 
         $sites = [];
         $seenNormalized = [];
+        $usedSlugs = [];
 
         foreach ($siteRows as $row) {
             $categoryPath = self::normalizePath(
@@ -213,20 +220,21 @@ class ExportBuilder
                 continue;
             }
 
-            $normalizedUrl = trim((string) ($row['normalized_url'] ?? ''));
+            $normalizedUrl = UrlNormalizer::normalize((string) (($row['normalized_url'] ?? '') ?: ($row['url'] ?? '')));
             if ($normalizedUrl === '') {
-                $normalizedUrl = trim((string) $row['url']);
+                continue;
             }
 
-            if ($normalizedUrl !== '' && isset($seenNormalized[$normalizedUrl])) {
+            if (isset($seenNormalized[$normalizedUrl])) {
                 continue;
             }
             $seenNormalized[$normalizedUrl] = true;
 
-            $slug = self::slugify((string) $row['title']);
-            if ($slug === '') {
-                $slug = 'site-' . (int) $row['id'];
+            $baseSlug = self::slugify((string) $row['title']);
+            if ($baseSlug === '') {
+                $baseSlug = 'site-' . (int) $row['id'];
             }
+            $slug = self::uniqueSlug($baseSlug, $categoryPath, $usedSlugs);
 
             $sites[] = [
                 'id' => (int) $row['id'],
@@ -243,7 +251,21 @@ class ExportBuilder
         return [
             'categories' => array_values($categoriesByPath),
             'sites' => $sites,
+            'leaf_paths' => array_keys($leafPaths),
         ];
+    }
+
+    private static function uniqueSlug(string $baseSlug, string $categoryPath, array &$usedSlugs): string
+    {
+        $key = $categoryPath . '|' . $baseSlug;
+
+        if (!isset($usedSlugs[$key])) {
+            $usedSlugs[$key] = 1;
+            return $baseSlug;
+        }
+
+        $usedSlugs[$key]++;
+        return $baseSlug . '-' . $usedSlugs[$key];
     }
 
     private static function buildCategoryFilters(?int $batchId, ?string $branch): array

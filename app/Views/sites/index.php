@@ -1,94 +1,204 @@
-<?php $pages = $result['pages']; ?>
-<h1 class="h3 mb-3">Source sites</h1>
-<form class="row g-2 mb-3" method="get">
-    <div class="col-md-2">
-        <select name="status" class="form-select">
-            <option value="">All sites</option>
-            <option value="ready" <?= $selectedStatus === 'ready' ? 'selected' : '' ?>>Ready</option>
-            <option value="approved" <?= $selectedStatus === 'approved' ? 'selected' : '' ?>>Approved</option>
-            <option value="rejected" <?= $selectedStatus === 'rejected' ? 'selected' : '' ?>>Rejected</option>
-            <option value="invalid" <?= $selectedStatus === 'invalid' ? 'selected' : '' ?>>Invalid</option>
-            <option value="missing_category" <?= $selectedStatus === 'missing_category' ? 'selected' : '' ?>>Missing category</option>
-            <option value="duplicates" <?= $selectedStatus === 'duplicates' ? 'selected' : '' ?>>Duplicates</option>
-        </select>
+<?php
+$sites = $sites ?? ['rows' => [], 'total' => 0, 'page' => 1, 'perPage' => 50, 'pages' => 1];
+$branches = $branches ?? [];
+$selectedStatus = $selectedStatus ?? '';
+$selectedBranch = $selectedBranch ?? '';
+$pathSearch = $pathSearch ?? '';
+$urlSearch = $urlSearch ?? '';
+$perPage = $perPage ?? 50;
+$counts = $counts ?? [
+    'total' => 0,
+    'ready' => 0,
+    'approved' => 0,
+    'rejected' => 0,
+    'invalid' => 0,
+    'duplicates' => 0,
+    'missing_category' => 0,
+    'ready_export' => 0,
+];
+
+function h(?string $value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+}
+
+function statusFilterLink(string $label, string $statusValue, int $count, string $selectedStatus, string $selectedBranch, string $pathSearch, string $urlSearch, int $perPage): string
+{
+    $query = array_filter([
+        'status' => $statusValue,
+        'branch' => $selectedBranch,
+        'path' => $pathSearch,
+        'url' => $urlSearch,
+        'per_page' => $perPage,
+    ], fn($v) => $v !== '');
+
+    $active = $selectedStatus === $statusValue || ($statusValue === '' && $selectedStatus === '');
+    $class = $active ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-outline-secondary';
+
+    return '<a class="' . $class . '" href="/sites?' . h(http_build_query($query)) . '">' . h($label) . ' <span class="badge text-bg-light">' . $count . '</span></a>';
+}
+?>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="h3 mb-1">Source sites</h1>
+        <div class="text-muted">Filter, review, and bulk-approve sites before export.</div>
     </div>
-    <div class="col-md-2">
-        <select name="branch" class="form-select">
-            <option value="">All top branches</option>
-            <?php foreach ($branches as $branch): ?>
-                <option value="<?= e($branch['top_branch']) ?>" <?= $selectedBranch === $branch['top_branch'] ? 'selected' : '' ?>><?= e($branch['top_branch']) ?></option>
-            <?php endforeach; ?>
-        </select>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body d-flex flex-wrap gap-2">
+        <?= statusFilterLink('All sites', '', (int) $counts['total'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Ready', 'ready', (int) $counts['ready'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Approved', 'approved', (int) $counts['approved'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Ready for export', 'ready_export', (int) $counts['ready_export'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Rejected', 'rejected', (int) $counts['rejected'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Invalid', 'invalid', (int) $counts['invalid'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Missing category', 'missing_category', (int) $counts['missing_category'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
+        <?= statusFilterLink('Duplicates', 'duplicates', (int) $counts['duplicates'], $selectedStatus, $selectedBranch, $pathSearch, $urlSearch, (int) $perPage) ?>
     </div>
-    <div class="col-md-3">
-        <input type="text" name="path" value="<?= e($pathSearch) ?>" class="form-control" placeholder="Category path contains...">
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Top branch</label>
+                <select name="branch" class="form-select">
+                    <option value="">All top branches</option>
+                    <?php foreach ($branches as $branch): ?>
+                        <?php $branchValue = is_array($branch) ? ($branch['top_branch'] ?? '') : (string) $branch; ?>
+                        <option value="<?= h($branchValue) ?>" <?= $selectedBranch === $branchValue ? 'selected' : '' ?>><?= h($branchValue) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All statuses</option>
+                    <?php foreach ([
+                        'ready' => 'Ready',
+                        'approved' => 'Approved',
+                        'ready_export' => 'Ready for export',
+                        'rejected' => 'Rejected',
+                        'invalid' => 'Invalid',
+                        'missing_category' => 'Missing category',
+                        'duplicates' => 'Duplicates',
+                    ] as $value => $label): ?>
+                        <option value="<?= h($value) ?>" <?= $selectedStatus === $value ? 'selected' : '' ?>><?= h($label) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Category path</label>
+                <input type="text" name="path" class="form-control" value="<?= h($pathSearch) ?>">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">URL or title</label>
+                <input type="text" name="url" class="form-control" value="<?= h($urlSearch) ?>">
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">Per page</label>
+                <select name="per_page" class="form-select">
+                    <?php foreach ([25, 50, 100, 250] as $size): ?>
+                        <option value="<?= $size ?>" <?= (int) $perPage === $size ? 'selected' : '' ?>><?= $size ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button class="btn btn-primary w-100">Go</button>
+            </div>
+        </form>
     </div>
-    <div class="col-md-3">
-        <input type="text" name="url" value="<?= e($urlSearch) ?>" class="form-control" placeholder="URL or title contains...">
-    </div>
-    <div class="col-md-1">
-        <select name="per_page" class="form-select">
-            <?php foreach ([25,50,100,250] as $size): ?>
-                <option value="<?= $size ?>" <?= $perPage === $size ? 'selected' : '' ?>><?= $size ?></option>
-            <?php endforeach; ?>
-        </select>
-    </div>
-    <div class="col-md-1 d-grid"><button class="btn btn-primary">Go</button></div>
-</form>
+</div>
+
 <form method="post" action="/sites/bulk">
-    <input type="hidden" name="status" value="<?= e($selectedStatus) ?>">
-    <input type="hidden" name="branch" value="<?= e($selectedBranch) ?>">
-    <input type="hidden" name="path" value="<?= e($pathSearch) ?>">
-    <input type="hidden" name="url" value="<?= e($urlSearch) ?>">
-    <input type="hidden" name="per_page" value="<?= e((string) $perPage) ?>">
-    <input type="hidden" name="page" value="<?= e((string) $result['page']) ?>">
-    <div class="card shadow-sm">
+    <input type="hidden" name="status" value="<?= h($selectedStatus) ?>">
+    <input type="hidden" name="branch" value="<?= h($selectedBranch) ?>">
+    <input type="hidden" name="path" value="<?= h($pathSearch) ?>">
+    <input type="hidden" name="url" value="<?= h($urlSearch) ?>">
+    <input type="hidden" name="per_page" value="<?= (int) $perPage ?>">
+    <input type="hidden" name="page" value="<?= (int) ($sites['page'] ?? 1) ?>">
+
+    <div class="card">
         <div class="table-responsive">
-            <table class="table table-striped table-sm mb-0 align-middle">
-                <thead><tr><th><input type="checkbox" data-check-all="sites"></th><th>ID</th><th>URL</th><th>Title</th><th>Category</th><th>Status</th></tr></thead>
-                <tbody>
-                <?php if (!$result['rows']): ?>
-                    <tr><td colspan="6" class="text-muted">No sites found.</td></tr>
-                <?php endif; ?>
-                <?php foreach ($result['rows'] as $row): ?>
+            <table class="table table-striped table-hover mb-0">
+                <thead>
                     <tr>
-                        <td><input type="checkbox" name="ids[]" value="<?= e((string) $row['id']) ?>" data-group="sites"></td>
-                        <td><?= e((string) $row['id']) ?></td>
-                        <td><a href="<?= e($row['url']) ?>" target="_blank"><?= e($row['url']) ?></a></td>
-                        <td>
-                            <div><?= e($row['title']) ?></div>
-                            <code class="small-path"><?= e($row['normalized_url']) ?></code>
-                        </td>
-                        <td><?= e($row['full_path'] ?? '') ?></td>
-                        <td>
-                            <span class="badge text-bg-secondary"><?= e($row['import_status']) ?></span>
-                            <?php if ((int) $row['duplicate_flag'] === 1): ?>
-                                <span class="badge text-bg-warning">duplicate</span>
-                            <?php endif; ?>
-                        </td>
+                        <th style="width:40px;"><input type="checkbox" data-check-all="sites"></th>
+                        <th>ID</th>
+                        <th>URL</th>
+                        <th>Title</th>
+                        <th>Category</th>
+                        <th>Status</th>
                     </tr>
-                <?php endforeach; ?>
+                </thead>
+                <tbody>
+                    <?php if (!empty($sites['rows'])): ?>
+                        <?php foreach ($sites['rows'] as $row): ?>
+                            <tr>
+                                <td><input type="checkbox" name="ids[]" value="<?= (int) $row['id'] ?>" data-group="sites"></td>
+                                <td><?= (int) $row['id'] ?></td>
+                                <td>
+                                    <div><a href="<?= h($row['url'] ?? '') ?>" target="_blank" rel="noreferrer"><?= h($row['url'] ?? '') ?></a></div>
+                                    <?php if (!empty($row['duplicate_flag'])): ?>
+                                        <div><span class="badge text-bg-warning">duplicate</span></div>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?= h($row['title'] ?? '') ?></td>
+                                <td><code class="small-path"><?= h($row['full_path'] ?? '') ?></code></td>
+                                <td><?= h($row['import_status'] ?? '') ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr><td colspan="6" class="text-center text-muted py-4">No sites found.</td></tr>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>
-        <div class="bg-white border-top p-3 d-flex flex-wrap gap-2 justify-content-between sticky-actions">
-            <div class="d-flex gap-2">
-                <button class="btn btn-success btn-sm" name="action" value="approve">Approve selected</button>
-                <button class="btn btn-danger btn-sm" name="action" value="reject">Reject selected</button>
-                <button class="btn btn-outline-secondary btn-sm" name="action" value="reset">Reset to ready</button>
+
+        <div class="card-body border-top">
+            <div class="d-flex flex-wrap gap-2">
+                <button class="btn btn-success" type="submit" name="action" value="approve">Approve selected</button>
+                <button class="btn btn-danger" type="submit" name="action" value="reject">Reject selected</button>
+                <button class="btn btn-outline-secondary" type="submit" name="action" value="reset">Reset to ready</button>
             </div>
-            <div class="text-muted small align-self-center">Showing <?= e((string) count($result['rows'])) ?> of <?= e((string) $result['total']) ?> sites.</div>
+        </div>
+
+        <div class="card-footer d-flex justify-content-between align-items-center">
+            <div class="text-muted">
+                Showing <?= count($sites['rows'] ?? []) ?> of <?= (int) ($sites['total'] ?? 0) ?> sites.
+            </div>
+            <ul class="pagination pagination-sm mb-0">
+                <?php
+                $prevDisabled = ((int) ($sites['page'] ?? 1) <= 1) ? 'disabled' : '';
+                $nextDisabled = ((int) ($sites['page'] ?? 1) >= (int) ($sites['pages'] ?? 1)) ? 'disabled' : '';
+
+                $prevQuery = http_build_query(array_filter([
+                    'status' => $selectedStatus,
+                    'branch' => $selectedBranch,
+                    'path' => $pathSearch,
+                    'url' => $urlSearch,
+                    'per_page' => $perPage,
+                    'page' => max(1, (int) ($sites['page'] ?? 1) - 1),
+                ], fn($v) => $v !== ''));
+
+                $nextQuery = http_build_query(array_filter([
+                    'status' => $selectedStatus,
+                    'branch' => $selectedBranch,
+                    'path' => $pathSearch,
+                    'url' => $urlSearch,
+                    'per_page' => $perPage,
+                    'page' => min((int) ($sites['pages'] ?? 1), (int) ($sites['page'] ?? 1) + 1),
+                ], fn($v) => $v !== ''));
+                ?>
+                <li class="page-item <?= $prevDisabled ?>">
+                    <a class="page-link" href="/sites?<?= h($prevQuery) ?>">Previous</a>
+                </li>
+                <li class="page-item <?= $nextDisabled ?>">
+                    <a class="page-link" href="/sites?<?= h($nextQuery) ?>">Next</a>
+                </li>
+            </ul>
         </div>
     </div>
 </form>
-<?php if ($pages > 1): ?>
-<nav class="mt-3">
-    <ul class="pagination pagination-sm flex-wrap">
-        <li class="page-item <?= $result['page'] <= 1 ? 'disabled' : '' ?>"><a class="page-link" href="<?= e(paginate_url(['page' => max(1, $result['page'] - 1)])) ?>">Previous</a></li>
-        <?php for ($p = max(1, $result['page'] - 2); $p <= min($pages, $result['page'] + 2); $p++): ?>
-            <li class="page-item <?= $p === $result['page'] ? 'active' : '' ?>"><a class="page-link" href="<?= e(paginate_url(['page' => $p])) ?>"><?= $p ?></a></li>
-        <?php endfor; ?>
-        <li class="page-item <?= $result['page'] >= $pages ? 'disabled' : '' ?>"><a class="page-link" href="<?= e(paginate_url(['page' => min($pages, $result['page'] + 1)])) ?>">Next</a></li>
-    </ul>
-</nav>
-<?php endif; ?>
