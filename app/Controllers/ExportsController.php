@@ -18,7 +18,8 @@ class ExportsController
 
         View::render('exports/index', [
             'runs' => ExportRun::paginate($page, $perPage),
-            'preview' => ExportBuilder::preview($batchId, $branch !== '' ? $branch : null),
+            'preview' => $batchId !== null ? ExportBuilder::preview((int) $batchId, $branch !== '' ? $branch : null) : ['categories' => 0, 'sites' => 0],
+            'batchRequired' => $batchId === null,
             'batches' => Batch::paginate(1, 250)['rows'],
             'branches' => SourceCategory::branches(),
             'selectedBatchId' => $batchId,

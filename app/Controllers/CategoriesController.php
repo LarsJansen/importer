@@ -44,7 +44,11 @@ class CategoriesController
         ];
 
         if ($ids && isset($statusMap[$action])) {
-            SourceCategory::bulkUpdateStatus($ids, $statusMap[$action]);
+            if ($action === 'approve') {
+                SourceCategory::bulkApproveBranches($ids);
+            } else {
+                SourceCategory::bulkUpdateStatus($ids, $statusMap[$action]);
+            }
         }
 
         redirect('/categories?' . http_build_query(array_filter([

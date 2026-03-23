@@ -2,6 +2,7 @@
 namespace App\Models;
 
 use App\Core\Database;
+use PDO;
 
 class SourceCategory
 {
@@ -25,8 +26,8 @@ class SourceCategory
         foreach ($params as $k => $v) {
             $stmt->bindValue(':' . $k, $v);
         }
-        $stmt->bindValue(':limit', $perPage, \PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);
+        $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
         $stmt->execute();
 
         return [
@@ -80,6 +81,95 @@ class SourceCategory
                 WHERE sc.id IN ({$placeholders})";
         $stmt = Database::connection()->prepare($sql);
         $stmt->execute(array_merge([$status], $ids));
+    }
+
+    public static function bulkApproveBranches(array $ids): void
+    {
+        $pdo = Database::connection();
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        $ids = array_values(array_filter($ids));
+
+        if ($ids === []) {
+            return;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $rootStmt = $pdo->prepare("SELECT id, batch_id, full_path FROM source_categories WHERE id IN ({$placeholders})");
+        $rootStmt->execute($ids);
+        $roots = $rootStmt->fetchAll();
+
+        if (!$roots) {
+            return;
+        }
+
+        $branchClauses = [];
+        $branchParams = [];
+        foreach ($roots as $root) {
+            $branchClauses[] = '(batch_id = ? AND (full_path = ? OR full_path LIKE ?))';
+            $branchParams[] = (int) $root['batch_id'];
+            $branchParams[] = (string) $root['full_path'];
+            $branchParams[] = (string) $root['full_path'] . '/%';
+        }
+
+        $branchWhere = implode(' OR ', $branchClauses);
+        $branchStmt = $pdo->prepare(
+            "SELECT id, source_category_id
+             FROM source_categories
+             WHERE {$branchWhere}"
+        );
+        $branchStmt->execute($branchParams);
+        $branchRows = $branchStmt->fetchAll();
+
+        if (!$branchRows) {
+            return;
+        }
+
+        $categoryRowIds = [];
+        $sourceCategoryIds = [];
+        foreach ($branchRows as $row) {
+            $categoryRowIds[] = (int) $row['id'];
+            $sourceCategoryIds[] = (int) $row['source_category_id'];
+        }
+
+        $categoryRowIds = array_values(array_unique($categoryRowIds));
+        $sourceCategoryIds = array_values(array_unique($sourceCategoryIds));
+
+        $pdo->beginTransaction();
+
+        try {
+            $categoryPlaceholders = implode(',', array_fill(0, count($categoryRowIds), '?'));
+
+            $stmt = $pdo->prepare(
+                "UPDATE source_categories
+                 SET mapping_status = 'approved', updated_at = NOW()
+                 WHERE id IN ({$categoryPlaceholders})"
+            );
+            $stmt->execute($categoryRowIds);
+
+            if ($sourceCategoryIds !== []) {
+                $mappingPlaceholders = implode(',', array_fill(0, count($sourceCategoryIds), '?'));
+                $stmt = $pdo->prepare(
+                    "UPDATE category_mapping
+                     SET mapping_status = 'approved', updated_at = NOW()
+                     WHERE source_category_id IN ({$mappingPlaceholders})"
+                );
+                $stmt->execute($sourceCategoryIds);
+            }
+
+            $stmt = $pdo->prepare(
+                "UPDATE source_sites
+                 SET import_status = 'approved', updated_at = NOW()
+                 WHERE source_category_row_id IN ({$categoryPlaceholders})"
+            );
+            $stmt->execute($categoryRowIds);
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
     }
 
     public static function branches(): array

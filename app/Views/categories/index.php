@@ -16,6 +16,10 @@ function h(?string $value): string { return htmlspecialchars((string) $value, EN
     </div>
 </div>
 
+<div class="alert alert-info">
+    Approving a category now cascades through the full branch: the selected category, all descendant categories, and all sites inside those categories are approved together.
+</div>
+
 <div class="card mb-3">
     <div class="card-body">
         <form method="get" class="row g-2 align-items-end">
@@ -104,7 +108,7 @@ function h(?string $value): string { return htmlspecialchars((string) $value, EN
 
         <div class="card-body border-top">
             <div class="d-flex flex-wrap gap-2">
-                <button class="btn btn-success" type="submit" name="action" value="approve">Approve selected</button>
+                <button class="btn btn-success" type="submit" name="action" value="approve">Approve selected branches + sites</button>
                 <button class="btn btn-warning" type="submit" name="action" value="skip">Skip selected</button>
                 <button class="btn btn-outline-secondary" type="submit" name="action" value="reset">Reset to pending</button>
             </div>
