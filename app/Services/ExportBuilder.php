@@ -254,7 +254,6 @@ public static function writeSql(?int $batchId = null, ?string $branch = null): a
         $categoriesByPath = [];
         $leafPaths = [];
         $sourceCategoryByExportPath = [];
-        $duplicateExportPaths = [];
 
         while ($row = $stmt->fetch(\PDO::FETCH_ASSOC)) {
             $exportPath = self::resolveExportPath(
@@ -271,12 +270,8 @@ public static function writeSql(?int $batchId = null, ?string $branch = null): a
                 $sourceCategoryByExportPath[$exportPath] = [];
             }
 
-            $sourceCategoryByExportPath[$exportPath][] = (string) $row['source_category_id'];
-
-            if (count(array_unique($sourceCategoryByExportPath[$exportPath])) > 1) {
-                $duplicateExportPaths[$exportPath] = array_values(array_unique($sourceCategoryByExportPath[$exportPath]));
-                continue;
-            }
+            $sourceCategoryId = (string) $row['source_category_id'];
+            $sourceCategoryByExportPath[$exportPath][$sourceCategoryId] = true;
             $leafPaths[$exportPath] = true;
 
             $segments = explode('/', $exportPath);
@@ -299,26 +294,23 @@ public static function writeSql(?int $batchId = null, ?string $branch = null): a
                 }
             }
 
-            $categoriesByPath[$exportPath]['name'] = trim((string) $row['category_name']) !== ''
-                ? trim((string) $row['category_name'])
-                : $categoriesByPath[$exportPath]['name'];
-            $categoriesByPath[$exportPath]['description'] = $row['description_raw'];
-            $categoriesByPath[$exportPath]['source_key'] = (string) $row['source_category_id'];
-        }
-
-        if (!empty($duplicateExportPaths)) {
-            $samples = [];
-            foreach ($duplicateExportPaths as $path => $sourceIds) {
-                $samples[] = $path . ' <- source_category_id(s): ' . implode(', ', array_values(array_unique($sourceIds)));
-                if (count($samples) >= 20) {
-                    break;
+            $resolvedName = trim((string) $row['category_name']);
+            if ($resolvedName !== '') {
+                $defaultLeafName = self::titleize((string) end($segments));
+                $existingName = (string) ($categoriesByPath[$exportPath]['name'] ?? '');
+                if ($existingName === '' || $existingName === $defaultLeafName) {
+                    $categoriesByPath[$exportPath]['name'] = $resolvedName;
                 }
             }
 
-            throw new \RuntimeException(
-                "Export aborted due to duplicate final category paths. Sample collisions:\n- "
-                . implode("\n- ", $samples)
-            );
+            $resolvedDescription = trim((string) ($row['description_raw'] ?? ''));
+            if ($resolvedDescription !== '' && trim((string) ($categoriesByPath[$exportPath]['description'] ?? '')) === '') {
+                $categoriesByPath[$exportPath]['description'] = $row['description_raw'];
+            }
+
+            if (($categoriesByPath[$exportPath]['source_key'] ?? null) === null) {
+                $categoriesByPath[$exportPath]['source_key'] = $sourceCategoryId;
+            }
         }
 
         uasort($categoriesByPath, function (array $a, array $b): int {
